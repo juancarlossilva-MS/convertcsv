@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  app:
+    build: .
+    entrypoint: dockerize  -timeout 40s ./entrypoint.sh
+    ports:
+      - 3000:8080
+    volumes:
+      - .:/home/node/app
+    
+  
