@@ -3,6 +3,7 @@
 const express = require('express');
 const fs = require('fs');
 var _ = require('lodash');
+const phoneUtil = require('google-libphonenumber').PhoneNumberUtil.getInstance();
 
 // Constants
 const PORT = 8080;
@@ -10,55 +11,68 @@ const HOST = '0.0.0.0';
 
 // App
 const app = express();
-app.get('/original',  (req, res) => {
-    
-     fs.readFile('input.csv', 'utf8', function (err,data) {
-        if (err) {
-            return console.log(err);
-        }
 
-        //var csvObject = csvToObjectArray(data);
-    
-        res.send(data);
-    });
-});
 app.get('/',  (req, res) => {
     
      fs.readFile('input.csv', 'utf8', function (err,data) {
         if (err) {
             return console.log(err);
         }
-
+        var arrayJsonRetorno = []
         var csvObject = csvToObjectArray(data);
-    
-        res.send(csvObject);
+
+        while(csvObject.length){
+            var actual = csvObject.shift();
+            for(var x=0;x<csvObject.length;x++){
+                if(actual.eid == csvObject[x].eid){
+                    var arrayToMerge = csvObject[x];
+                    csvObject.splice(x,1);
+                                    
+                    _.mapKeys(actual,function(val,key){
+              
+                        if(key == "groups" || key == "address"){
+                            actual[key] = _.union(val,arrayToMerge[key])
+                            
+                        }
+                    })
+         
+                }
+            }
+        
+            arrayJsonRetorno.push(actual);
+        }
+        var json = JSON.stringify(arrayJsonRetorno)
+        fs.writeFile('output.json', json, 'utf8',function(err) {
+            if (err) throw err;
+            console.log('complete');
+            res.send( "<h1>Arquivo convertido com sucesso!</h1>" );
+            }
+        );
     });
 });
 
-//falta o merge entre eids iguais
-//falta tratar as barras /
 
 function csvToObjectArray(csvString) {
-    var csvRowArray    = csvString.split(/\n/);
-    var headerCellArray = trimQuotes(csvRowArray.shift().split(','));
-    var heads = [];
-   
-    for(var k=0; k<headerCellArray.length;k++){
-        heads.push(h)
-      
+    var csvRowArray    = csvString.split(/\r\n/);
+    if(csvRowArray.length == 1){
+        csvRowArray = csvString.split(/\n/);
     }
-   // console.log(heads);
-    var objectArray = [];
+
+    var headerCellArray = trimQuotes(csvRowArray.shift().split(','));
+
     var rows = [];
     while (csvRowArray.length) {
         var rowCellArray = trimQuotes(csvRowArray.shift().split('"'));
 
-        if(rowCellArray[0].length == 0) continue;
+        if(rowCellArray[0].length == 0) continue; // trata possiveis linhas vazias
+
         var ret = [];
-        var ret2 = [];
+
         for(var l=0;l<rowCellArray.length;l++){
             if(rowCellArray.length == 1){
+              
                 ret =   _.concat(ret,rowCellArray[l].split(','))
+             
                 continue;
             }
             if(l == 1){
@@ -70,99 +84,96 @@ function csvToObjectArray(csvString) {
                 ret = _.concat(ret,_.slice(rowCellArray[l].split(','),1))
                 continue;
             }
-            var div = rowCellArray[l].split(',')
-            console.log(_.slice(div,0,div.length-1));
+            var div = trimQuotes(rowCellArray[l].split(','))
+       
             ret = _.concat(ret,_.slice(div,0,div.length-1))
         }
-      /*  for(var x=0;x<ret.length;x++){
-            console.log(ret)
-            console.log(ret[x])
-           ret2.push( ret[x][0].split(','))
-        }*/
-//        console.log(ret)
+     
+
         var ob = {}
         var address = [];
         var groups = [];
         for(var n=0;n<headerCellArray.length;n++){
             var h = headerCellArray[n].split(" ");
-            console.log(h);
-               
+         
                 if(h.length > 1){
                     var tags = [];
+                    if(ret[n] == "") continue; 
+                    var qtdAddress = ret[n].split("/");
+                    if(h[0] == "phone"){
+                        
+                        try{
+                            var phone = phoneUtil.parse(ret[n],"BR");
+                            if(!phoneUtil.isValidNumberForRegion(phone, 'BR')){
+                                continue;
+                            }
+
+                        }catch(e){
+                        
+                            continue;
+                        }
+                      
+                    }
+                    
                     for(var j=1;j<h.length;j++){
-                        console.log(h)
-                        console.log(h[j])
                        tags.push(h[j]);
                     }
-                    address.push({
-                                    "type":h[0],
-                                    "tags":tags,
-                                    "address":ret[n]
-                                }
-                             );            
-                }else{
-                    if(h[0] == "group"){
-                        groups.push(ret[n])
-                    }else{
-                        ob = _.merge(ob,{ [ h[0] ] : ret[n] })
+                    for(var u=0;u<qtdAddress.length;u++){
+                        if(h[0] == "email"){
+                            qtdAddress[u] = qtdAddress[u].split(" ")[0];
+                        }
+                        address.push({
+                                        "type":h[0],
+                                        "tags":tags,
+                                        "address":qtdAddress[u]
+                                    });            
                     }
+
+                   
+                }else{
+                    switch(h[0]){
+                        case "group":
+                            if(ret[n] !== ""){
+                                var gs = ret[n].split("/")
+                                for(var p=0;p<gs.length;p++){
+                                    var gs2 = gs[p].split(",");
+                                    for(var s=0;s<gs2.length;s++){
+                                        groups.push(_.trim(gs2[s]))
+                                    }
+                                }
+                            }else{
+                                continue;
+                            }
+                        break;
+                        case "invisible" :
+                            if(ret[n]){
+                                ob = _.merge(ob,{ [ h[0] ] :true })
+                            }else{
+                                ob = _.merge(ob,{ [ h[0] ] : false })
+                            }
+                        break;
+                        case "see_all" :
+                            if(ret[n]){
+                                ob = _.merge(ob,{ [ h[0] ] :true })
+                            }else{
+                                ob = _.merge(ob,{ [ h[0] ] : false })
+                            }
+                        break;
+                        default:
+                            ob = _.merge(ob,{ [ h[0] ] : ret[n] })
+                        break;
+                    }
+                    
                 }
                 
         }
         ob = _.merge(ob,{"address":address});
-        ob = _.merge(ob,{"group":groups});
+        ob = _.merge(ob,{"groups":groups});
         rows.push(ob)
         
     }
     return rows;
-    /*
-    while(objectArray.length){
-
-        var obj = objectArray.shift()
-        var ob = {}
-        var address = [];
-        var groups = [];
-        for(var i=0;i<heads.length;i++){
-            if(heads[i].length > 1){
-                var tags = [];
-                for(var j=1;j<heads[i].length;j++){
-                   tags.push(heads[i][j]);
-                }
-                address.push({
-                                "type":heads[i][0],
-                                "tags":tags,
-                                "address":obj[heads[i]]
-                            }
-                         );            
-            }else{
-                if(heads[i] == "group"){
-                    groups.push(obj[heads[i]])
-                }else{
-                    ob = _.merge(ob,{ [ heads[i][heads[i].length-1] ] : obj[heads[i]] })
-                }
-            
-        }
-        
-    }
-    ob = _.merge(ob,{"address":address});
-    ob = _.merge(ob,{"group":groups});
-
-        /*var ob = [{
-            "fullname":obj.fullname,
-            "eid":obj.eid,
-            "address":[{
-                "type":"email",
-                "tags":[
-                    "Student"
-                ],
-                "address":obj["email,Student"]
-            }]
-        }]
-        rows.push(ob)
-    }
-
-
-    return rows;*/
+   
 }
 
 function trimQuotes(stringArray) {
